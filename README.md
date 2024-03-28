@@ -1,6 +1,6 @@
 # GlobantChallenge
 ### Author: Nicolás Szoloch
-### Version: 1.0
+### Version: 1.0 
 
 
 ## Description:
