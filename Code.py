@@ -125,3 +125,238 @@ resultados = result.fetchall()
 print("\nJobs:")
 for r in resultados:
     print(f"ID: {r.id}, Job: {r.job}")
+
+
+
+# Initialize Flask application
+app = Flask(__name__)
+
+template_folder = 'C:/Users/onico/OneDrive/Escritorio/Desafio/templates'
+schemas = {
+    'employees': ['id', 'name', 'datetime', 'department_id', 'job_id'],
+    'departments': ['id', 'department'],
+    'jobs': ['id', 'job']
+}
+tables = list(schemas.keys())
+@app.route('/')
+def index():
+    return 'Welcome to my Flask application!'
+
+# Menu for Backup and Restore features
+#@app.route('/')
+#def index():
+#    return render_template('menu.html', tables=tables)
+
+# Get table by name
+def get_table_by_name(table_name):
+    table = None
+    if table_name == 'employees':
+        table = employees
+    elif table_name == 'departments':
+        table = departments
+    elif table_name == 'jobs':
+        table = jobs
+    return table
+
+# Function to validate data dictionary rules
+def validate_data(row, table_name):
+    schema = schemas[table_name]
+    skipped_reasons = []
+
+    # Verify same number of fields
+    if len(row) != len(schema):
+        skipped_reasons.append(f"Number of columns doesn't match schema.")
+        return None, skipped_reasons
+                    
+    # Verify all schema fields are in the row
+    for campo in schema:
+        if not row.get(campo):
+            skipped_reasons.append(f"Missing field {campo}.")
+            return None, skipped_reasons
+    
+    # Convert hire_datetime string to datetime object
+    if 'datetime' in schema:
+        try:
+            row['datetime'] = parse_datetime(row['datetime'])
+        except ValueError:
+            skipped_reasons.append("Invalid datetime format.")
+            return None, skipped_reasons
+
+    # Validate numeric fields
+    for campo in ['id', 'department_id', 'job_id']:
+        if campo in schema:
+            try:
+                row[campo] = float(row[campo])
+            except ValueError:
+                skipped_reasons.append(f"Non-numeric value found in field {campo}.")
+                return None, skipped_reasons
+
+    return row, None
+
+
+# REST API endpoint to receive new data
+@app.route('/insert_data/<table_name>', methods=['POST'])
+def insert_data(table_name):
+    if table_name not in tables:
+        return jsonify({'error': 'Table not found'}), 404
+
+    data = request.json
+    if not isinstance(data, list):
+        return jsonify({'error': 'Data must be a list of dictionaries'}), 400
+
+    if len(data) > 1000:
+        return jsonify({'error': 'Exceeded maximum allowed rows (1000)'}), 400
+
+    valid_data = []
+    skipped_data = {}
+
+    for row in data:
+        validated_row, skipped_reasons = validate_data(row, table_name)
+        if validated_row:
+            valid_data.append(validated_row)
+        else:
+            skipped_data[str(row)] = skipped_reasons
+
+    if valid_data:
+        table = get_table_by_name(table_name)
+
+        try:
+            with engine.begin() as conn:
+                conn.execute(table.insert(), valid_data)
+                conn.commit()  # Commit changes to the database
+            return jsonify({'message': 'Data inserted successfully', 'skipped_rows': skipped_data}), 201
+        except IntegrityError:
+            return jsonify({'error': 'Integrity constraint violation'}), 400
+    else:
+        return jsonify({'error': 'All rows skipped', 'skipped_rows': skipped_data}), 400
+
+
+# Backup feature
+@app.route('/backup/<table_name>', methods=['POST'])
+def backup_table(table_name):
+    
+    if table_name not in tables:
+        return jsonify({'error': 'Table not found'}), 404
+
+    data = request.json
+    if not isinstance(data, dict):
+        return jsonify({'error': 'Data must be a dictionary like {"name": "BackupName"}'}), 400
+
+    backup_name = data.get('name')
+    if not backup_name:
+        return jsonify({'error': 'Missing or empty "name" field in the request body'}), 400
+    
+    if not isinstance(backup_name, str):
+        return jsonify({'error': 'The value associated with the "name" field must be a string'}), 400
+    
+    table = get_table_by_name(table_name)
+
+    if table is not None:
+        # Get table metadata using SQLAlchemy's inspect function
+        inspector = inspect(engine)
+        columns = inspector.get_columns(table_name)
+
+        # Generate AVRO schema based on table structure
+        schema = {
+            "type": "record",
+            "name": table_name,
+            "fields": [
+                {"name": col['name'], "type": "string" if col['type'].python_type == str or col['type'].python_type == datetime.datetime else col['type'].python_type.__name__} for col in columns
+            ]
+        }
+
+        # Retrieve data from the table
+        results = session.query(table).all()
+
+        # Convert SQLAlchemy results to list of dictionaries
+        data = []
+        for row in results:
+            row_dict = {}
+            for column in table.columns:
+                # Convert datetime object to string
+                if isinstance(getattr(row, column.name), datetime.datetime):
+                    row_dict[column.name] = getattr(row, column.name).strftime('%Y-%m-%dT%H:%M:%SZ')
+                else:
+                    row_dict[column.name] = getattr(row, column.name)
+            data.append(row_dict)
+
+        # Specify the file path for the backup
+        file_path = f'backup/{table_name}_{backup_name}_backup.avro'
+
+        # Write data to AVRO file
+        with open(file_path, 'wb') as f:
+            fastavro.writer(f, schema, data)
+
+        return jsonify({'message': f'Backup created successfully for table {table_name}', 'file_path': file_path}), 201
+    else:
+        return jsonify({'error': 'Table not found'}), 404
+
+
+# Restore feature
+@app.route('/restore/<table_name>', methods=['POST'])
+def restore_table(table_name):
+    if table_name not in tables:
+        return jsonify({'error': 'Table not found'}), 404
+
+    data = request.json
+    if not isinstance(data, dict):
+        return jsonify({'error': 'Data must be a dictionary like {"name": "BackupName"}'}), 400
+
+    backup_name = data.get('name')
+    if not backup_name:
+        return jsonify({'error': 'Missing or empty "name" field in the request body'}), 400
+    
+    if not isinstance(backup_name, str):
+        return jsonify({'error': 'The value associated with the "name" field must be a string'}), 400
+
+    # Specify the file path for the backup
+    file_path = f'backup/{table_name}_{backup_name}_backup.avro'
+
+    try:
+        with open(file_path, 'rb') as f:
+            avro_reader = fastavro.reader(f)
+            writer_schema = avro_reader.writer_schema
+
+            # Read data from AVRO file into a list
+            avro_data = list(avro_reader)
+
+            # Validate schema against table schema
+            table = get_table_by_name(table_name)
+            
+            expected_columns = [col['name'] for col in writer_schema['fields']]
+            actual_columns = [col.name for col in table.columns]
+            if expected_columns != actual_columns:
+                return jsonify({'error': 'Failed to restore backup. Differences found in the schema of the backup and the table data.'}), 400
+
+            # Convert datetime strings back to datetime objects
+            if 'datetime' in expected_columns:
+                for row in avro_data:
+                    if 'datetime' in row:
+                        row['datetime'] = parse_datetime(row['datetime'])
+                            
+            # Clear existing data in the table
+            try:
+                with engine.begin() as conn:
+                    conn.execute(table.delete())
+            except Exception as e:
+                return jsonify({'error': f'Failed to restore backup. Could not delete the existing table. Error: {str(e)}'}), 400
+
+            # Insert restored data into the table
+            try:
+                f.seek(0)
+                with engine.begin() as conn:
+                    conn.execute(table.insert(), avro_data)
+                    conn.commit()  # Commit changes to the database
+            except Exception as e:
+                return jsonify({'error': f'Failed to restore backup. Could not load avro backup data to the existing table. Error: {str(e)}'}), 400
+
+            return jsonify({'message': f'Data restored successfully for table {table_name} using the backup: {backup_name}'}), 200
+    except FileNotFoundError:
+        return jsonify({'error': f'Backup avro file not found in path {file_path}.'}), 404
+    except Exception as e:
+        return jsonify({'error': f'An error occurred while restoring backup: {str(e)}'}), 500
+
+    
+# Run App
+if __name__ == '__main__':
+    app.run(debug=False)
