@@ -356,6 +356,107 @@ def restore_table(table_name):
     except Exception as e:
         return jsonify({'error': f'An error occurred while restoring backup: {str(e)}'}), 500
 
+
+# Challenge 2.1: Get number of employees hired for each job and department in 2021 divided by quarter.
+@app.route('/get1', methods=['GET'])
+def hired_employees_job_dep_2021_quarter():
+    
+    try:
+        sql_query = text("""
+        WITH cte1 as (
+            SELECT *, 
+            case 
+            when cast(strftime('%m', datetime) as integer) between 1 and 3 then 'Q1'
+            when cast(strftime('%m', datetime) as integer) between 4 and 6 then 'Q2'
+            when cast(strftime('%m', datetime) as integer) between 7 and 9 then 'Q3'
+            when cast(strftime('%m', datetime) as integer) between 10 and 12 then 'Q4'
+            end as quarter
+            FROM employees
+            WHERE strftime('%Y', datetime) = '2021'
+        ),
+        cte2 as (
+            SELECT department_id, job_id, quarter, COUNT(*) as count
+            FROM cte1
+            WHERE quarter is not null
+            GROUP BY 1, 2, 3
+        )
+        SELECT
+            d.department,
+            j.job,
+            SUM(CASE WHEN quarter = 'Q1' THEN count ELSE 0 END) AS Q1,
+            SUM(CASE WHEN quarter = 'Q2' THEN count ELSE 0 END) AS Q2,
+            SUM(CASE WHEN quarter = 'Q3' THEN count ELSE 0 END) AS Q3,
+            SUM(CASE WHEN quarter = 'Q4' THEN count ELSE 0 END) AS Q4
+        FROM cte2 a
+        LEFT JOIN jobs j ON (a.job_id = j.id)
+        LEFT JOIN departments d ON (a.department_id = d.id)
+        GROUP BY 1, 2
+        ORDER BY 1,2
+        """)
+        #result = session.execute(sql_query)
+        #resultados = result.fetchall()
+        with engine.begin() as conn:
+            result = conn.execute(sql_query)
+            resultados = result.fetchall()
+
+        query_results = []
+
+        for r in resultados:
+            row_dict = {column: value for column, value in zip(result.keys(), r)}
+            query_results.append(row_dict)
+
+        return jsonify(query_results), 201
+    except SQLAlchemyError as e:
+        # Handle SQLAlchemy errors
+        return jsonify({'error': str(e)}), 404
+    except Exception as e:
+        # Handle other unexpected errors
+        return jsonify({'error': 'Unexpected error occurred'}), 500
+    
+# Challenge 2.2: List of ids, name and number of employees hired of each department that hired more employees than the mean of employees hired in 2021 for all the departments, ordered by the number of employees hired (descending).
+@app.route('/get2', methods=['GET'])
+def hired_employees_dep_more_than_2021_mean():
+    
+    try:
+        sql_query = text("""
+        WITH cte1 as (
+            SELECT department_id, COUNT(*) as count
+            FROM employees
+            WHERE strftime('%Y', datetime) = '2021'
+            GROUP BY 1
+        ),
+        cte2 as (
+            SELECT department_id, COUNT(*) as count
+            FROM employees
+            GROUP BY 1
+        )
+        SELECT
+        a.department_id as id,
+        d.department as department,
+        a.count as hired
+        FROM cte2 a
+        LEFT JOIN departments d ON (a.department_id = d.id)
+        WHERE a.count > (SELECT AVG(count) FROM cte1)
+        """)
+        #result = session.execute(sql_query)
+        #resultados = result.fetchall()
+        with engine.begin() as conn:
+            result = conn.execute(sql_query)
+            resultados = result.fetchall()
+
+        query_results = []
+
+        for r in resultados:
+            row_dict = {column: value for column, value in zip(result.keys(), r)}
+            query_results.append(row_dict)
+
+        return jsonify(query_results), 201
+    except SQLAlchemyError as e:
+        # Handle SQLAlchemy errors
+        return jsonify({'error': str(e)}), 404
+    except Exception as e:
+        # Handle other unexpected errors
+        return jsonify({'error': 'Unexpected error occurred'}), 500
     
 # Run App
 if __name__ == '__main__':
