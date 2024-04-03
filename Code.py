@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify
+from flask_jwt_extended import JWTManager, jwt_required, create_access_token
 from sqlalchemy import create_engine, MetaData, Table, Column, Integer, String, DateTime
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -130,8 +131,9 @@ for r in resultados:
 
 # Initialize Flask application
 app = Flask(__name__)
+app.config['JWT_SECRET_KEY'] = 'chiken123'
+jwt = JWTManager(app)
 
-template_folder = 'C:/Users/onico/OneDrive/Escritorio/Desafio/templates'
 schemas = {
     'employees': ['id', 'name', 'datetime', 'department_id', 'job_id'],
     'departments': ['id', 'department'],
@@ -142,10 +144,14 @@ tables = list(schemas.keys())
 def index():
     return 'Welcome to my Flask application!'
 
-# Menu for Backup and Restore features
-#@app.route('/')
-#def index():
-#    return render_template('menu.html', tables=tables)
+
+@app.route('/login', methods=['POST'])
+def login():
+    if request.json.get('username') == 'abc' and request.json.get('password') == '123':
+        access_token = create_access_token(identity=request.json.get('username'))
+        return jsonify(access_token=access_token), 200
+    else:
+        return jsonify({'message': 'Invalid credentials. Give correct username and password in the request body.'}), 401
 
 # Get table by name
 def get_table_by_name(table_name):
@@ -196,6 +202,7 @@ def validate_data(row, table_name):
 
 # REST API endpoint to receive new data
 @app.route('/insert_data/<table_name>', methods=['POST'])
+@jwt_required()
 def insert_data(table_name):
     if table_name not in tables:
         return jsonify({'error': 'Table not found'}), 404
@@ -233,6 +240,7 @@ def insert_data(table_name):
 
 # Backup feature
 @app.route('/backup/<table_name>', methods=['POST'])
+@jwt_required()
 def backup_table(table_name):
     
     if table_name not in tables:
@@ -294,6 +302,7 @@ def backup_table(table_name):
 
 # Restore feature
 @app.route('/restore/<table_name>', methods=['POST'])
+@jwt_required()
 def restore_table(table_name):
     if table_name not in tables:
         return jsonify({'error': 'Table not found'}), 404

@@ -1,6 +1,6 @@
 # GlobantChallenge
 ### Author: Nicolás Szoloch
-### Version: 3.0 
+### Version: 4.0 
 
 
 ## Description:
@@ -9,4 +9,5 @@ This program, written in Python 3.7, uses a RESTFUL API to create different endp
 ## Features:
 1. Migrate Data: It can load CSV files and load to SQL tables, with integrity and format validaton functions. If the CSV files contain wrong rows, it will skip and print them, so it will only load up the correct data.
 2. Insert, Backup and Restore Data: Implemented a RESTFUL API using Flask Application to create different endpoints where user can send their HTTP POST requests for insert data as JSON, backup data and restore data. 
-3. Calculate Data: Added two new endpoints where users can send HTTP GET requests to the API and get pre-calculated results in the SQL Database, related to the hired employees, jobs and departments data. 
+3. Calculate Data: Added two new endpoints where users can send HTTP GET requests to the API and get pre-calculated results in the SQL Database, related to the hired employees, jobs and departments data.
+4. API Security: A protection layer has been added to the RESTFUL API, so users can now authenticate with user and password, and they get a Token. This token is required to send requests to the API for the features: Insert, Backup and Restore data. If the user has no token, the API block it's access. 
